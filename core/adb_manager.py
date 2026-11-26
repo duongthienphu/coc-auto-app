@@ -23,6 +23,9 @@ def find_adb_binary() -> str:
     Khi chạy dưới dạng PyInstaller .exe (frozen), copy adb sang %LOCALAPPDATA%
     để tránh khóa thư mục tạm _MEIPASS gây lỗi 'Failed to remove temporary directory'.
     """
+    ld_adb = r"D:\LDPlayer\LDPlayer9\adb.exe"
+    if os.path.isfile(ld_adb):
+        return ld_adb
     # 1. Nếu là PyInstaller frozen .exe
     if getattr(sys, "frozen", False):
         try:
