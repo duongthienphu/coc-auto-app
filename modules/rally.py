@@ -177,7 +177,14 @@ def _check_and_claim_reward(sct: mss.MSS, vp: Tuple[int, int, int, int], adb: AD
     return False
 
 
-def _handle_rally_detail_popup(sct: mss.MSS, vp: Tuple[int, int, int, int], adb: ADBManager, stop_event: threading.Event, log_cb: Optional[Callable[[str], None]] = None) -> Tuple[bool, bool]:
+def _handle_rally_detail_popup(
+    sct: mss.MSS,
+    vp: Tuple[int, int, int, int],
+    adb: ADBManager,
+    stop_event: threading.Event,
+    log_cb: Optional[Callable[[str], None]] = None,
+    allow_type_d_close_x: bool = True,
+) -> Tuple[bool, bool]:
     global _last_clicked_tile, _full_tiles_cooldown, _recently_joined_tiles
     if stop_event.is_set():
         return False, False
@@ -185,6 +192,10 @@ def _handle_rally_detail_popup(sct: mss.MSS, vp: Tuple[int, int, int, int], adb:
     gw_l, gw_t, gw_w, gw_h = vp
     screen_crop = safe_grab(sct, {"left": gw_l, "top": gw_t, "width": gw_w, "height": gw_h})
     if screen_crop is None:
+        return False, False
+
+    # Chặn tuyệt đối: Khi khung Chat đang mở, không bao giờ xử lý như Popup ô đất/Map
+    if _is_chat_open(screen_crop):
         return False, False
 
     # 0. Type Alert: Hộp thoại thông báo hệ thống dạng Modal ("Xác Nhận")
@@ -236,13 +247,20 @@ def _handle_rally_detail_popup(sct: mss.MSS, vp: Tuple[int, int, int, int], adb:
 
     tab_high = screen_crop[int(gw_h * 0.02):int(gw_h * 0.08), int(gw_w * 0.03):int(gw_w * 0.38)]
     top_dim_high = screen_crop[int(gw_h * 0.01):int(gw_h * 0.07), int(gw_w * 0.45):int(gw_w * 0.90)]
+    purple_band_high = screen_crop[int(gw_h * 0.09):int(gw_h * 0.115), int(gw_w * 0.05):int(gw_w * 0.95)]
+    top_purple_ratio = 0.0
+    if purple_band_high.size > 0:
+        hsv_pb = cv2.cvtColor(purple_band_high, cv2.COLOR_BGR2HSV)
+        pm_high = cv2.inRange(hsv_pb, np.array([120, 45, 70], dtype=np.uint8), np.array([160, 180, 170], dtype=np.uint8))
+        top_purple_ratio = float(np.count_nonzero(pm_high)) / float(max(1, purple_band_high.shape[0] * purple_band_high.shape[1]))
+
     is_high_sheet = (
         not is_low_sheet
-        and not _is_chat_open(screen_crop)
         and tab_high.size > 0
         and top_dim_high.size > 0
         and np.mean(tab_high) < 75.0
         and np.mean(top_dim_high) < 55.0
+        and top_purple_ratio >= 0.18
     )
     is_multi_sheet = is_low_sheet or is_high_sheet
 
@@ -432,23 +450,25 @@ def _handle_rally_detail_popup(sct: mss.MSS, vp: Tuple[int, int, int, int], adb:
         return True, False
 
     # 4. Type D: Bảng mỏ vàng phe ta / ô đất đồng minh / lane địch không thể đánh (có nút [X] ở đáy, KHÔNG có nút Back tím)
-    crop_close_x = screen_crop[int(gw_h * 0.925):int(gw_h * 0.980), int(gw_w * 0.44):int(gw_w * 0.56)]
-    w_x_mask = (crop_close_x[:, :, 0] > 180) & (crop_close_x[:, :, 1] > 180) & (crop_close_x[:, :, 2] > 180)
-    tot_x = max(1, crop_close_x.shape[0] * crop_close_x.shape[1])
-    x_ratio = float(np.count_nonzero(w_x_mask)) / float(tot_x)
+    # Tắt hoàn toàn nhánh này khi chạy chế độ Dune Chat (allow_type_d_close_x=False) để không bao giờ bấm nhầm nút [X] thoát Mapview.
+    if allow_type_d_close_x:
+        crop_close_x = screen_crop[int(gw_h * 0.925):int(gw_h * 0.980), int(gw_w * 0.44):int(gw_w * 0.56)]
+        w_x_mask = (crop_close_x[:, :, 0] > 180) & (crop_close_x[:, :, 1] > 180) & (crop_close_x[:, :, 2] > 180)
+        tot_x = max(1, crop_close_x.shape[0] * crop_close_x.shape[1])
+        x_ratio = float(np.count_nonzero(w_x_mask)) / float(tot_x)
 
-    if x_ratio >= 0.04:
-        close_x = int(gw_l + gw_w * 0.50)
-        close_y = int(gw_t + gw_h * 0.955)
-        _adb_tap(adb, vp, close_x, close_y, "Đóng bảng ô đất / tài nguyên (Nút X)", log_cb)
-        _sleep(config.RALLY_DELAY_AFTER_BACK_CLICK, stop_event)
-        if _last_clicked_tile is not None:
-            cooldown = getattr(config, "RALLY_FULL_TILE_COOLDOWN", 30.0)
-            _full_tiles_cooldown[_last_clicked_tile] = time.time() + cooldown
-            if log_cb:
-                log_cb(f"Ô ({_last_clicked_tile[0]}, {_last_clicked_tile[1]}) là ô đất/tài nguyên -> Bỏ qua {int(cooldown)}s")
-        _last_clicked_tile = None
-        return True, False
+        if x_ratio >= 0.04:
+            close_x = int(gw_l + gw_w * 0.50)
+            close_y = int(gw_t + gw_h * 0.955)
+            _adb_tap(adb, vp, close_x, close_y, "Đóng bảng ô đất / tài nguyên (Nút X)", log_cb)
+            _sleep(config.RALLY_DELAY_AFTER_BACK_CLICK, stop_event)
+            if _last_clicked_tile is not None:
+                cooldown = getattr(config, "RALLY_FULL_TILE_COOLDOWN", 30.0)
+                _full_tiles_cooldown[_last_clicked_tile] = time.time() + cooldown
+                if log_cb:
+                    log_cb(f"Ô ({_last_clicked_tile[0]}, {_last_clicked_tile[1]}) là ô đất/tài nguyên -> Bỏ qua {int(cooldown)}s")
+            _last_clicked_tile = None
+            return True, False
 
     return False, False
 
@@ -747,15 +767,56 @@ def _is_chat_open(screen_crop: np.ndarray) -> bool:
     return light_ratio >= float(getattr(config, "RALLY_CHAT_BODY_LIGHT_RATIO", 0.42))
 
 
-def _is_lien_minh_tab_active(screen_crop: np.ndarray) -> bool:
-    """Kiểm tra tab 'Liên Minh' trên cùng bên trái khung Chat có đang được chọn (nền tím) không."""
+def _detect_lien_minh_tab_target_y(screen_crop: np.ndarray) -> Tuple[float, float, float]:
+    """
+    Xác định vị trí tab 'Liên Minh' bên trái khung Chat:
+    - Nếu slot 1 (Y: 0.07..0.18) là tab 'Thế Giới' (quả địa cầu xanh dương cyan, không có khiên vàng),
+      thì 'Liên Minh' nằm ở slot 2 (Y: 0.19..0.30, tâm 0.245).
+    - Ngược lại 'Liên Minh' nằm ở slot 1 (Y: 0.07..0.18, tâm 0.119).
+    Trả về: (y_min_rel, y_max_rel, click_y_rel).
+    """
+    y1_rel = float(getattr(config, "RALLY_CHAT_TAB_REL_Y_MIN", 0.070))
+    y2_rel = float(getattr(config, "RALLY_CHAT_TAB_REL_Y_MAX", 0.180))
+    click_y1 = float(getattr(config, "RALLY_CHAT_LIEN_MINH_TAB_Y", 0.119))
+
     if screen_crop is None or screen_crop.size == 0:
-        return False
+        return y1_rel, y2_rel, click_y1
+
     gh, gw = screen_crop.shape[:2]
     x1 = max(0, min(gw - 1, int(gw * getattr(config, "RALLY_CHAT_TAB_REL_X_MIN", 0.030))))
     x2 = max(x1 + 1, min(gw, int(gw * getattr(config, "RALLY_CHAT_TAB_REL_X_MAX", 0.180))))
-    y1 = max(0, min(gh - 1, int(gh * getattr(config, "RALLY_CHAT_TAB_REL_Y_MIN", 0.070))))
-    y2 = max(y1 + 1, min(gh, int(gh * getattr(config, "RALLY_CHAT_TAB_REL_Y_MAX", 0.200))))
+    sy1 = max(0, min(gh - 1, int(gh * y1_rel)))
+    sy2 = max(sy1 + 1, min(gh, int(gh * y2_rel)))
+    slot1 = screen_crop[sy1:sy2, x1:x2]
+    if slot1.size == 0:
+        return y1_rel, y2_rel, click_y1
+
+    hsv1 = cv2.cvtColor(slot1, cv2.COLOR_BGR2HSV)
+    tot = float(max(1, slot1.shape[0] * slot1.shape[1]))
+    cyan_ratio = float(np.count_nonzero(cv2.inRange(hsv1, np.array([85, 90, 90], dtype=np.uint8), np.array([115, 255, 255], dtype=np.uint8)))) / tot
+    gold_ratio = float(np.count_nonzero(cv2.inRange(hsv1, np.array([16, 120, 140], dtype=np.uint8), np.array([32, 255, 255], dtype=np.uint8)))) / tot
+
+    min_cyan = float(getattr(config, "RALLY_CHAT_WORLD_CYAN_RATIO", 0.05))
+    max_gold = float(getattr(config, "RALLY_CHAT_WORLD_MAX_GOLD_RATIO", 0.03))
+    if cyan_ratio >= min_cyan and gold_ratio <= max_gold:
+        return (
+            float(getattr(config, "RALLY_CHAT_TAB2_REL_Y_MIN", 0.190)),
+            float(getattr(config, "RALLY_CHAT_TAB2_REL_Y_MAX", 0.300)),
+            float(getattr(config, "RALLY_CHAT_LIEN_MINH_TAB_Y_SLOT2", 0.245)),
+        )
+    return y1_rel, y2_rel, click_y1
+
+
+def _is_lien_minh_tab_active(screen_crop: np.ndarray) -> bool:
+    """Kiểm tra tab 'Liên Minh' (ở slot 1 hoặc slot 2 nếu có tab Thế Giới) có đang được chọn (nền tím) không."""
+    if screen_crop is None or screen_crop.size == 0:
+        return False
+    gh, gw = screen_crop.shape[:2]
+    y1_rel, y2_rel, _ = _detect_lien_minh_tab_target_y(screen_crop)
+    x1 = max(0, min(gw - 1, int(gw * getattr(config, "RALLY_CHAT_TAB_REL_X_MIN", 0.030))))
+    x2 = max(x1 + 1, min(gw, int(gw * getattr(config, "RALLY_CHAT_TAB_REL_X_MAX", 0.180))))
+    y1 = max(0, min(gh - 1, int(gh * y1_rel)))
+    y2 = max(y1 + 1, min(gh, int(gh * y2_rel)))
     tab_roi = screen_crop[y1:y2, x1:x2]
     if tab_roi.size == 0:
         return False
@@ -811,7 +872,7 @@ def _close_chat_if_open(
     stop_event: threading.Event,
     log_cb: Optional[Callable[[str], None]] = None,
 ) -> bool:
-    """Chỉ bấm nút [X] đóng Chat khi xác nhận chắc chắn khung Chat đang mở (tránh bấm nhầm thoát Map)."""
+    """Chỉ bấm khoảng trống phía trên đỉnh khung Chat (Y=0.030) để đóng Chat khi xác nhận Chat đang mở (tránh xa nút [X] ở đáy)."""
     if stop_event.is_set():
         return False
     gw_l, gw_t, gw_w, gw_h = vp
@@ -819,8 +880,8 @@ def _close_chat_if_open(
     if frame is None or not _is_chat_open(frame):
         return False
     close_x = int(gw_l + gw_w * getattr(config, "RALLY_CHAT_CLOSE_X", 0.500))
-    close_y = int(gw_t + gw_h * getattr(config, "RALLY_CHAT_CLOSE_Y", 0.955))
-    _adb_tap(adb, vp, close_x, close_y, "Đóng khung Chat về Map", log_cb)
+    close_y = int(gw_t + gw_h * getattr(config, "RALLY_CHAT_CLOSE_Y", 0.030))
+    _adb_tap(adb, vp, close_x, close_y, "Đóng khung Chat (vùng trên đỉnh)", log_cb)
     _sleep(getattr(config, "RALLY_DELAY_AFTER_CHAT_CLOSE", 0.40), stop_event)
     return True
 
@@ -904,9 +965,9 @@ def _tap_chat_join_and_handle_popup(
     if _sleep(getattr(config, "RALLY_DELAY_AFTER_CHAT_CLICK", 1.10), stop_event):
         return "STOPPED"
 
-    is_pop, is_join = _handle_rally_detail_popup(sct, vp, adb, stop_event, log_cb)
+    is_pop, is_join = _handle_rally_detail_popup(sct, vp, adb, stop_event, log_cb, allow_type_d_close_x=False)
     if not is_pop and not _sleep(0.50, stop_event):
-        is_pop, is_join = _handle_rally_detail_popup(sct, vp, adb, stop_event, log_cb)
+        is_pop, is_join = _handle_rally_detail_popup(sct, vp, adb, stop_event, log_cb, allow_type_d_close_x=False)
 
     if is_pop:
         if is_join:
@@ -953,12 +1014,13 @@ def scan_and_join_chat_rallies(
     if frame is None or not _is_chat_open(frame):
         return "NOT_CHAT"
 
-    # Đảm bảo đang đứng ở tab Liên Minh
+    # Đảm bảo đang đứng ở tab Liên Minh (hỗ trợ cả slot 1 và slot 2 nếu có tab Thế Giới)
     if not _is_lien_minh_tab_active(frame):
-        tab_x = int(gw_l + gw_w * getattr(config, "RALLY_CHAT_LIEN_MINH_TAB_X", 0.086))
-        tab_y = int(gw_t + gw_h * getattr(config, "RALLY_CHAT_LIEN_MINH_TAB_Y", 0.119))
+        _, _, target_tab_y = _detect_lien_minh_tab_target_y(frame)
+        tab_x = int(gw_l + gw_w * getattr(config, "RALLY_CHAT_LIEN_MINH_TAB_X", 0.110))
+        tab_y = int(gw_t + gw_h * target_tab_y)
         _adb_tap(adb, vp, tab_x, tab_y, "Chuyển sang tab Liên Minh", log_cb)
-        if _sleep(float(getattr(config, "RALLY_DELAY_AFTER_TAB_CLICK", 0.65)), stop_event):
+        if _sleep(float(getattr(config, "RALLY_DELAY_AFTER_TAB_CLICK", 0.75)), stop_event):
             return "STOPPED"
         frame = safe_grab(sct, {"left": gw_l, "top": gw_t, "width": gw_w, "height": gw_h})
         if frame is None:
@@ -1021,17 +1083,14 @@ def _run_dune_chat_loop(
     log_cb: Callable[[str], None],
 ) -> None:
     """
-    Vòng lặp chuyên dụng cho Sa Hải Dune (Camp trực tiếp trong Chat Liên Minh):
-    - Đứng camp cố định ở đáy tab Liên Minh (không đóng/mở lặp lại theo badge đỏ từ tab khác).
-    - Quét đáy tức thì mỗi ~0.4s; định kỳ 6s vuốt lên/xuống bắt Rally bị trôi.
+    Vòng lặp chuyên dụng cho Sa Hải Dune (Camp cố định 100% trong Chat Liên Minh):
+    - Tuyệt đối KHÔNG gọi Type D (Nút X) và KHÔNG tự đóng Chat -> Không bao giờ bấm nhầm nút [X] thoát Mapview.
+    - Quét đáy tức thì mỗi ~0.4s; định kỳ 8s vuốt lên/xuống bắt Rally bị trôi.
     - Khi thấy nút xanh -> Bấm Tham gia -> Xử lý Popup Rally trên Map -> Quay về Mapview check quà
       rồi lập tức mở lại Chat để camp tiếp.
-    - Định kỳ 25s đóng Chat 1 nhịp ra Mapview kiểm tra nhận quà trận đã xong rồi vào camp lại.
     """
-    drift_interval = float(getattr(config, "RALLY_DUNE_DRIFT_SCROLL_INTERVAL", 6.0))
-    reward_interval = float(getattr(config, "RALLY_DUNE_REWARD_CHECK_INTERVAL", 25.0))
+    drift_interval = float(getattr(config, "RALLY_DUNE_DRIFT_SCROLL_INTERVAL", 8.0))
     last_drift_scroll = time.time()
-    last_reward_check = time.time()
 
     while not stop_event.is_set():
         raw_vp = get_vp_func()
@@ -1043,15 +1102,6 @@ def _run_dune_chat_loop(
         vp = _get_effective_vp(sct, raw_vp)
         gw_l, gw_t, gw_w, gw_h = vp
 
-        # 1. Nếu đang có Popup Rally / Alert mở sẵn -> xử lý trước để quay về Mapview sạch
-        is_pop, is_join = _handle_rally_detail_popup(sct, vp, adb, stop_event, log_cb)
-        if is_pop:
-            if is_join:
-                log_cb("Dune: Đã xử lý popup tồn đọng & tham gia Rally -> Vào lại Chat camp tiếp")
-            _sleep(0.4, stop_event)
-            continue
-
-        # 2. Chụp khung hình hiện tại để phân biệt đang ở Chat hay Mapview/Popup Reward
         screen_crop = safe_grab(sct, {"left": gw_l, "top": gw_t, "width": gw_w, "height": gw_h})
         if screen_crop is None:
             _sleep(0.4, stop_event)
@@ -1059,28 +1109,30 @@ def _run_dune_chat_loop(
 
         chat_open = _is_chat_open(screen_crop)
 
-        # Chỉ kiểm tra nhận thưởng khi KHÔNG đứng trong Chat (tránh bấm nhầm thanh nhập liệu Chat)
         if not chat_open:
-            if _check_and_claim_reward(sct, vp, adb, stop_event, log_cb):
-                last_reward_check = time.time()
+            # 1. Chỉ xử lý Popup Rally / Alert hoặc nhận quà khi KHÔNG đứng trong Chat (tắt hẳn nút X Type D)
+            is_pop, is_join = _handle_rally_detail_popup(
+                sct, vp, adb, stop_event, log_cb, allow_type_d_close_x=False
+            )
+            if is_pop:
+                if is_join:
+                    log_cb("Dune: Đã xử lý popup & tham gia Rally -> Vào lại Chat camp tiếp")
+                _sleep(0.45, stop_event)
                 continue
 
-            chat_x = int(gw_l + gw_w * getattr(config, "RALLY_CHAT_ICON_X", 0.874))
+            if _check_and_claim_reward(sct, vp, adb, stop_event, log_cb):
+                continue
+
+            # 2. Mở lại khung Chat Liên Minh để đứng camp cố định
+            chat_x = int(gw_l + gw_w * getattr(config, "RALLY_CHAT_ICON_X", 0.927))
             chat_y = int(gw_t + gw_h * getattr(config, "RALLY_CHAT_ICON_Y", 0.770))
             _adb_tap(adb, vp, chat_x, chat_y, "Mở khung Chat Liên Minh để camp", log_cb)
-            if _sleep(getattr(config, "RALLY_DELAY_AFTER_CHAT_OPEN", 0.85), stop_event):
+            if _sleep(getattr(config, "RALLY_DELAY_AFTER_CHAT_OPEN", 0.95), stop_event):
                 break
             last_drift_scroll = time.time()
 
-        # 4. Định kỳ kiểm tra nhận thưởng trên Mapview (phòng trường hợp popup nhận quà bị Chat che)
+        # 3. Quét nhanh đáy Chat; định kỳ mỗi drift_interval mới vuốt lên/xuống bắt Rally bị trôi
         now = time.time()
-        if now - last_reward_check >= reward_interval:
-            _close_chat_if_open(sct, vp, adb, stop_event, None)
-            _check_and_claim_reward(sct, vp, adb, stop_event, log_cb)
-            last_reward_check = time.time()
-            continue
-
-        # 5. Quét nhanh đáy Chat; định kỳ mỗi drift_interval mới vuốt lên/xuống bắt Rally bị trôi
         do_scroll = (now - last_drift_scroll >= drift_interval)
         chat_res = scan_and_join_chat_rallies(sct, vp, adb, stop_event, log_cb, allow_scroll=do_scroll)
         if do_scroll:

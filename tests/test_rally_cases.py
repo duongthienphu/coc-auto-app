@@ -686,12 +686,13 @@ class TestRallyCases(unittest.TestCase):
         self.assertEqual(res_cooldown, "NONE")
         self.assertEqual(len(self.mock_adb.taps), 0, "Vị trí Y vừa lỗi phải bị khóa cooldown 8s")
 
-        # Đóng Chat an toàn khi đang mở Chat
+        # Đóng Chat an toàn bằng khoảng trống phía trên đỉnh (Y ~ 0.030, tránh xa nút X đáy 0.955)
         self.mock_adb.clear()
         with patch("modules.rally.safe_grab", side_effect=make_mock_grab(chat_empty)):
             closed = rally._close_chat_if_open(None, self.vp, self.mock_adb, self.stop_event)
         self.assertTrue(closed)
         self.assertEqual(len(self.mock_adb.taps), 1)
+        self.assertAlmostEqual(self.mock_adb.taps[0][1] / self.gw_h, 0.030, delta=0.02)
 
         # Trên Mapview tuyệt đối không bấm [X]
         self.mock_adb.clear()
@@ -774,6 +775,49 @@ class TestRallyCases(unittest.TestCase):
         self.assertAlmostEqual(self.mock_adb.taps[0][1] / self.gw_h, 0.277, delta=0.04)
         self.assertAlmostEqual(self.mock_adb.taps[1][0] / self.gw_w, 0.70, delta=0.05)
         self.assertAlmostEqual(self.mock_adb.taps[1][1] / self.gw_h, 0.04, delta=0.03)
+
+    def test_case_20_dune_zero_x_protection_and_world_tab_offset(self):
+        """Chống bấm nhầm nút X trên Chat / allow_type_d_close_x=False & tự nhận tab Liên Minh ở slot 2 dưới tab Thế Giới."""
+        # 1. Chat đang mở có điểm trắng sáng ở đáy (Y: 0.925..0.980) -> _handle_rally_detail_popup PHẢI trả (False, False)
+        chat_bright_x = self._create_chat_frame(include_green_btn=False, lien_minh_active=True)
+        chat_bright_x[int(self.gw_h * 0.94):int(self.gw_h * 0.97), int(self.gw_w * 0.47):int(self.gw_w * 0.53)] = (255, 255, 255)
+        with patch("modules.rally.safe_grab", side_effect=make_mock_grab(chat_bright_x)):
+            is_pop, is_join = rally._handle_rally_detail_popup(None, self.vp, self.mock_adb, self.stop_event)
+        self.assertFalse(is_pop)
+        self.assertFalse(is_join)
+        self.assertEqual(len(self.mock_adb.taps), 0, "Tuyệt đối không được bấm Nút X khi đang mở khung Chat!")
+
+        # 2. Type D frame khi allow_type_d_close_x=False (chế độ Dune) -> KHÔNG được bấm Nút X
+        type_d_frame = self._create_blank_frame()
+        self._draw_popup_card(type_d_frame)
+        type_d_frame[int(self.gw_h * 0.94):int(self.gw_h * 0.97), int(self.gw_w * 0.48):int(self.gw_w * 0.52)] = (255, 255, 255)
+        self.mock_adb.clear()
+        with patch("modules.rally.safe_grab", side_effect=make_mock_grab(type_d_frame)):
+            is_pop_d, _ = rally._handle_rally_detail_popup(
+                None, self.vp, self.mock_adb, self.stop_event, allow_type_d_close_x=False
+            )
+        self.assertFalse(is_pop_d)
+        self.assertEqual(len(self.mock_adb.taps), 0, "Chế độ Dune tuyệt đối không bao giờ bấm Nút X Type D!")
+
+        # 3. Chat có tab Thế Giới (xanh cyan) ở slot 1 (Y=0.07..0.18), Liên Minh ở slot 2 (Y=0.19..0.30)
+        chat_world_tab = self._create_chat_frame(include_green_btn=False, lien_minh_active=False)
+        # Vẽ quả địa cầu cyan ở slot 1
+        chat_world_tab[int(self.gw_h * 0.09):int(self.gw_h * 0.16), int(self.gw_w * 0.06):int(self.gw_w * 0.14)] = (220, 180, 30)
+        # Vẽ slot 2 màu tím đang active
+        chat_world_tab[int(self.gw_h * 0.20):int(self.gw_h * 0.29), int(self.gw_w * 0.04):int(self.gw_w * 0.17)] = (220, 60, 140)
+        self.assertTrue(rally._is_lien_minh_tab_active(chat_world_tab))
+        _, _, target_y = rally._detect_lien_minh_tab_target_y(chat_world_tab)
+        self.assertAlmostEqual(target_y, config.RALLY_CHAT_LIEN_MINH_TAB_Y_SLOT2, delta=0.01)
+
+        # Nếu slot 2 chưa tím -> scan_and_join_chat_rallies phải bấm đúng vào slot 2 (Y ~ 0.245), không bấm nhầm Thế Giới
+        chat_world_inactive = self._create_chat_frame(include_green_btn=False, lien_minh_active=False)
+        chat_world_inactive[int(self.gw_h * 0.09):int(self.gw_h * 0.16), int(self.gw_w * 0.06):int(self.gw_w * 0.14)] = (220, 180, 30)
+        self.assertFalse(rally._is_lien_minh_tab_active(chat_world_inactive))
+        self.mock_adb.clear()
+        with patch("modules.rally.safe_grab", side_effect=make_mock_grab(chat_world_inactive)):
+            rally.scan_and_join_chat_rallies(None, self.vp, self.mock_adb, self.stop_event, allow_scroll=False)
+        self.assertEqual(len(self.mock_adb.taps), 1)
+        self.assertAlmostEqual(self.mock_adb.taps[0][1] / self.gw_h, config.RALLY_CHAT_LIEN_MINH_TAB_Y_SLOT2, delta=0.02)
 
 
 if __name__ == "__main__":

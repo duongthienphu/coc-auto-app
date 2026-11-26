@@ -144,17 +144,23 @@ RALLY_CHAT_BADGE_REL_Y_MIN: float = 0.710
 RALLY_CHAT_BADGE_REL_Y_MAX: float = 0.800
 RALLY_CHAT_BADGE_MIN_RATIO: float = 0.008
 
-# Tab "Liên Minh" bên trái khung Chat và nút đóng [X] an toàn ở đáy khi Chat đang mở
+# Tab "Liên Minh" bên trái khung Chat (hỗ trợ cả trường hợp có tab Thế Giới ở trên cùng đẩy Liên Minh xuống slot 2)
 RALLY_CHAT_LIEN_MINH_TAB_X: float = 0.110
 RALLY_CHAT_LIEN_MINH_TAB_Y: float = 0.119
+RALLY_CHAT_LIEN_MINH_TAB_Y_SLOT2: float = 0.245
 RALLY_CHAT_TAB_REL_X_MIN: float = 0.030
 RALLY_CHAT_TAB_REL_X_MAX: float = 0.180
 RALLY_CHAT_TAB_REL_Y_MIN: float = 0.070
-RALLY_CHAT_TAB_REL_Y_MAX: float = 0.200
+RALLY_CHAT_TAB_REL_Y_MAX: float = 0.180
+RALLY_CHAT_TAB2_REL_Y_MIN: float = 0.190
+RALLY_CHAT_TAB2_REL_Y_MAX: float = 0.300
 RALLY_CHAT_TAB_PURPLE_RATIO: float = 0.28
+RALLY_CHAT_WORLD_CYAN_RATIO: float = 0.05
+RALLY_CHAT_WORLD_MAX_GOLD_RATIO: float = 0.03
 
+# Tọa độ khoảng trống phía trên đỉnh khung Chat để đóng Chat an toàn (tránh xa nút [X] ở đáy Y=0.955)
 RALLY_CHAT_CLOSE_X: float = 0.500
-RALLY_CHAT_CLOSE_Y: float = 0.955
+RALLY_CHAT_CLOSE_Y: float = 0.030
 
 # Nhận diện khung Chat đang mở (Send button xanh + nền trắng tin nhắn + đáy tối)
 RALLY_CHAT_SEND_REL_X_MIN: float = 0.720
@@ -192,13 +198,12 @@ RALLY_CHAT_SCROLL_UP_STEPS: int = 2
 CHAT_SCROLL_BOTTOM_X: float = 0.915
 CHAT_SCROLL_BOTTOM_Y: float = 0.772
 
-# Chu kỳ & độ trễ riêng cho chế độ Dune (Camp trong Chat Liên Minh)
-RALLY_DELAY_AFTER_CHAT_OPEN: float = 0.85
-RALLY_DELAY_AFTER_TAB_CLICK: float = 0.65
+# Chu kỳ & độ trễ riêng cho chế độ Dune (Camp cố định trong Chat Liên Minh)
+RALLY_DELAY_AFTER_CHAT_OPEN: float = 0.95
+RALLY_DELAY_AFTER_TAB_CLICK: float = 0.75
 RALLY_DELAY_AFTER_CHAT_SCROLL: float = 0.75
 RALLY_DELAY_AFTER_CHAT_CLOSE: float = 0.45
 RALLY_DUNE_DRIFT_SCROLL_INTERVAL: float = 8.0
-RALLY_DUNE_REWARD_CHECK_INTERVAL: float = 25.0
 RALLY_DUNE_TAP_COOLDOWN: float = 8.0
 RALLY_DUNE_FULL_CARD_COOLDOWN: float = 45.0
 RALLY_DUNE_CARD_DIFF_THRESHOLD: float = 12.0
@@ -250,13 +255,13 @@ RALLY_DELAY_TAP_HOLD: float = 0.08
 RALLY_DELAY_AFTER_JOIN_CLICK: float = 0.80
 
 # Thời gian chờ sau khi bấm nút Back nhỏ để đóng popup (đợi hoạt ảnh hạ popup)
-RALLY_DELAY_AFTER_BACK_CLICK: float = 0.70
+RALLY_DELAY_AFTER_BACK_CLICK: float = 0.80
 
 # Thời gian chờ sau khi bấm "Xác Nhận" nhận quà (chờ hoạt ảnh "Phần Thưởng!" 2s kết thúc và Mapview hiện lại)
 RALLY_DELAY_AFTER_CLAIM_REWARD: float = 2.20
 
 # Thời gian chờ sau khi bấm "Tham gia" trong Chat (đợi game tải bản đồ và mở popup)
-RALLY_DELAY_AFTER_CHAT_CLICK: float = 1.10
+RALLY_DELAY_AFTER_CHAT_CLICK: float = 1.20
 
 # Thời gian chờ sau khi click Avatar trên Map (đợi tải dữ liệu ô trên map)
 RALLY_DELAY_AFTER_MAP_CLICK: float = 0.90
