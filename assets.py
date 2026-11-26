@@ -157,3 +157,45 @@ def get_zoom_btn_template():
         except Exception:
             _cached_zoom_btn = None
     return _cached_zoom_btn
+
+
+# Template bieu tuong khien vang tab 'Lien Minh' trong khung Chat (nhan dien chinh xac bat ke vi tri slot 1..6)
+LIEN_MINH_SHIELD_B64: str = (
+    "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"
+)
+_cached_lien_minh_tab = None
+
+
+def get_lien_minh_tab_template() -> Optional[np.ndarray]:
+    """Giai ma template icon khien vang cua tab Lien Minh trong khung Chat."""
+    global _cached_lien_minh_tab
+    if _cached_lien_minh_tab is None:
+        try:
+            raw_bytes = base64.b64decode(LIEN_MINH_SHIELD_B64)
+            _cached_lien_minh_tab = cv2.imdecode(np.frombuffer(raw_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+        except Exception:
+            _cached_lien_minh_tab = None
+    return _cached_lien_minh_tab
