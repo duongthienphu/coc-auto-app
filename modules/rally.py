@@ -241,9 +241,26 @@ def _handle_rally_detail_popup(
             return True, False
 
     # 1. Type A: Popup danh sách Rally (hỗ trợ cả bản thấp Y=0.15..0.22 và bản cao Dune Y=0.02..0.08)
+    # Lưu ý badge '18+ Chơi quá 180 phút' có thể đè chữ trắng lên phần trái header thấp -> kiểm tra thêm phần phải X=0.25..0.42 + viền tím thân bảng.
     tab_low = screen_crop[int(gw_h * 0.15):int(gw_h * 0.22), int(gw_w * 0.03):int(gw_w * 0.40)]
+    tab_low_right = screen_crop[int(gw_h * 0.15):int(gw_h * 0.22), int(gw_w * 0.25):int(gw_w * 0.42)]
     top_dim_low = screen_crop[int(gw_h * 0.09):int(gw_h * 0.14), int(gw_w * 0.20):int(gw_w * 0.80)]
-    is_low_sheet = (tab_low.size > 0 and top_dim_low.size > 0 and np.mean(tab_low) < 75.0 and np.mean(top_dim_low) < 70.0)
+    left_margin_low = screen_crop[int(gw_h * 0.25):int(gw_h * 0.85), int(gw_w * 0.005):int(gw_w * 0.035)]
+    left_margin_purple_ratio = 0.0
+    if left_margin_low.size > 0:
+        hsv_lm = cv2.cvtColor(left_margin_low, cv2.COLOR_BGR2HSV)
+        lm_mask = cv2.inRange(hsv_lm, np.array([115, 35, 60], dtype=np.uint8), np.array([160, 220, 255], dtype=np.uint8))
+        left_margin_purple_ratio = float(np.count_nonzero(lm_mask)) / float(max(1, left_margin_low.shape[0] * left_margin_low.shape[1]))
+
+    is_low_sheet = (
+        tab_low.size > 0
+        and top_dim_low.size > 0
+        and float(np.mean(top_dim_low)) < 70.0
+        and (
+            float(np.mean(tab_low)) < 75.0
+            or (tab_low_right.size > 0 and float(np.mean(tab_low_right)) < 70.0 and left_margin_purple_ratio >= 0.55)
+        )
+    )
 
     tab_high = screen_crop[int(gw_h * 0.02):int(gw_h * 0.08), int(gw_w * 0.03):int(gw_w * 0.38)]
     top_dim_high = screen_crop[int(gw_h * 0.01):int(gw_h * 0.07), int(gw_w * 0.45):int(gw_w * 0.90)]
@@ -478,26 +495,44 @@ def _handle_rally_detail_popup(
         _last_clicked_tile = None
         return True, False
 
-    # 4. Type D: Bảng mỏ vàng phe ta / ô đất đồng minh / lane địch không thể đánh (có nút [X] ở đáy, KHÔNG có nút Back tím)
-    # Tắt hoàn toàn nhánh này khi chạy chế độ Dune Chat (allow_type_d_close_x=False) để không bao giờ bấm nhầm nút [X] thoát Mapview.
-    if allow_type_d_close_x:
-        crop_close_x = screen_crop[int(gw_h * 0.925):int(gw_h * 0.980), int(gw_w * 0.44):int(gw_w * 0.56)]
-        w_x_mask = (crop_close_x[:, :, 0] > 180) & (crop_close_x[:, :, 1] > 180) & (crop_close_x[:, :, 2] > 180)
-        tot_x = max(1, crop_close_x.shape[0] * crop_close_x.shape[1])
-        x_ratio = float(np.count_nonzero(w_x_mask)) / float(tot_x)
+    # 4. Type D: Bảng mỏ vàng phe ta / ô đất đồng minh / Đồng Bằng (có nút [X] ở đáy, KHÔNG có nút Back tím)
+    crop_close_x = screen_crop[int(gw_h * 0.925):int(gw_h * 0.980), int(gw_w * 0.44):int(gw_w * 0.56)]
+    w_x_mask = (crop_close_x[:, :, 0] > 180) & (crop_close_x[:, :, 1] > 180) & (crop_close_x[:, :, 2] > 180)
+    tot_x = max(1, crop_close_x.shape[0] * crop_close_x.shape[1])
+    x_ratio = float(np.count_nonzero(w_x_mask)) / float(tot_x)
 
-        if x_ratio >= 0.04:
-            close_x = int(gw_l + gw_w * 0.50)
-            close_y = int(gw_t + gw_h * 0.955)
-            _adb_tap(adb, vp, close_x, close_y, "Đóng bảng ô đất / tài nguyên (Nút X)", log_cb)
-            _sleep(config.RALLY_DELAY_AFTER_BACK_CLICK, stop_event)
-            if _last_clicked_tile is not None:
-                cooldown = getattr(config, "RALLY_FULL_TILE_COOLDOWN", 30.0)
-                _full_tiles_cooldown[_last_clicked_tile] = time.time() + cooldown
-                if log_cb:
-                    log_cb(f"Ô ({_last_clicked_tile[0]}, {_last_clicked_tile[1]}) là ô đất/tài nguyên -> Bỏ qua {int(cooldown)}s")
-            _last_clicked_tile = None
-            return True, False
+    # Ở chế độ Dune (allow_type_d_close_x=False), chỉ được đóng [X] khi KHỚP CHẶT cả 4 dấu hiệu bảng ô đất
+    # che nút Chat: nền thẻ sáng S<45,V>180 >= 0.35 + thanh tiêu đề tối >= 0.35 + dải đáy hai bên [X] tối < 115 + nút [X] trắng đậm >= 0.22.
+    can_close_strict_territory = False
+    if not allow_type_d_close_x and x_ratio >= 0.22:
+        lav180_ratio = float(np.count_nonzero((hsv_bg[:, :, 1] < 45) & (hsv_bg[:, :, 2] > 180))) / float(
+            max(1, roi_card_bg.shape[0] * roi_card_bg.shape[1])
+        )
+        tb_low = cv2.cvtColor(screen_crop[int(gw_h * 0.64):int(gw_h * 0.72), int(gw_w * 0.05):int(gw_w * 0.35)], cv2.COLOR_BGR2GRAY)
+        tb_high = cv2.cvtColor(screen_crop[int(gw_h * 0.50):int(gw_h * 0.60), int(gw_w * 0.05):int(gw_w * 0.35)], cv2.COLOR_BGR2GRAY)
+        tb_dark_low = float(np.count_nonzero(tb_low < 80)) / float(max(1, tb_low.size))
+        tb_dark_high = float(np.count_nonzero(tb_high < 80)) / float(max(1, tb_high.size))
+        foot_l = screen_crop[int(gw_h * 0.925):int(gw_h * 0.980), int(gw_w * 0.10):int(gw_w * 0.38)]
+        foot_r = screen_crop[int(gw_h * 0.925):int(gw_h * 0.980), int(gw_w * 0.62):int(gw_w * 0.90)]
+        has_dark_x_footer = (
+            foot_l.size > 0 and foot_r.size > 0
+            and float(np.mean(foot_l)) < 115.0
+            and float(np.mean(foot_r)) < 115.0
+        )
+        can_close_strict_territory = (lav180_ratio >= 0.35 and max(tb_dark_low, tb_dark_high) >= 0.35 and has_dark_x_footer)
+
+    if (allow_type_d_close_x and x_ratio >= 0.04) or can_close_strict_territory:
+        close_x = int(gw_l + gw_w * 0.50)
+        close_y = int(gw_t + gw_h * 0.955)
+        _adb_tap(adb, vp, close_x, close_y, "Đóng bảng ô đất / tài nguyên (Nút X)", log_cb)
+        _sleep(config.RALLY_DELAY_AFTER_BACK_CLICK, stop_event)
+        if _last_clicked_tile is not None:
+            cooldown = getattr(config, "RALLY_FULL_TILE_COOLDOWN", 30.0)
+            _full_tiles_cooldown[_last_clicked_tile] = time.time() + cooldown
+            if log_cb:
+                log_cb(f"Ô ({_last_clicked_tile[0]}, {_last_clicked_tile[1]}) là ô đất/tài nguyên -> Bỏ qua {int(cooldown)}s")
+        _last_clicked_tile = None
+        return True, False
 
     return False, False
 
@@ -820,8 +855,18 @@ def _detect_lien_minh_tab_target_y(screen_crop: np.ndarray) -> Optional[Tuple[fl
     ref_h = float(getattr(config, "RALLY_CHAT_TAB_REF_HEIGHT", 715.0))
     base_sc = float(gh) / ref_h if ref_h > 0 else 1.0
     match_thresh = float(getattr(config, "RALLY_CHAT_TAB_MATCH_THRESHOLD", 0.68))
+    gray_thresh = float(getattr(config, "RALLY_CHAT_TAB_GRAY_MATCH_THRESHOLD", 0.78))
+    gold_min_ratio = float(getattr(config, "RALLY_CHAT_TAB_GOLD_MIN_RATIO", 0.15))
+    lower_gold = np.array(getattr(config, "HSV_CHAT_CARD_GOLD_LOWER", [12, 80, 100]), dtype=np.uint8)
+    upper_gold = np.array(getattr(config, "HSV_CHAT_CARD_GOLD_UPPER", [34, 255, 255]), dtype=np.uint8)
+
+    sidebar_gray = cv2.cvtColor(sidebar, cv2.COLOR_BGR2GRAY)
+    tpl_gray = cv2.cvtColor(shield_tpl, cv2.COLOR_BGR2GRAY) if len(shield_tpl.shape) == 3 else shield_tpl
+
     best_score = 0.0
     best_cy_px = 0
+    best_gray_score = 0.0
+    best_gray_cy_px = 0
     tpl_h, tpl_w = shield_tpl.shape[:2]
     for mult in (0.85, 0.95, 1.00, 1.05, 1.15, 1.30):
         cur_sc = base_sc * mult
@@ -829,19 +874,34 @@ def _detect_lien_minh_tab_target_y(screen_crop: np.ndarray) -> Optional[Tuple[fl
         cur_th = max(8, int(tpl_h * cur_sc))
         if cur_tw >= sidebar.shape[1] or cur_th >= sidebar.shape[0]:
             continue
-        scaled = cv2.resize(
-            shield_tpl,
-            (cur_tw, cur_th),
-            interpolation=cv2.INTER_AREA if cur_sc < 1.0 else cv2.INTER_LINEAR,
-        )
+        interp = cv2.INTER_AREA if cur_sc < 1.0 else cv2.INTER_LINEAR
+        scaled = cv2.resize(shield_tpl, (cur_tw, cur_th), interpolation=interp)
         res = cv2.matchTemplate(sidebar, scaled, cv2.TM_CCOEFF_NORMED)
         _, max_v, _, max_l = cv2.minMaxLoc(res)
         if max_v > best_score:
             best_score = float(max_v)
             best_cy_px = int(sb_y1 + max_l[1] + cur_th // 2)
 
+        scaled_gray = cv2.resize(tpl_gray, (cur_tw, cur_th), interpolation=interp)
+        res_gray = cv2.matchTemplate(sidebar_gray, scaled_gray, cv2.TM_CCOEFF_NORMED)
+        _, max_gv, _, max_gl = cv2.minMaxLoc(res_gray)
+        if max_gv >= gray_thresh and float(max_gv) > best_gray_score:
+            gx, gy = int(max_gl[0]), int(max_gl[1])
+            patch = sidebar[gy:gy + cur_th, gx:gx + cur_tw]
+            if patch.size > 0:
+                hsv_p = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+                gold_ratio = float(np.count_nonzero(cv2.inRange(hsv_p, lower_gold, upper_gold))) / float(
+                    max(1, patch.shape[0] * patch.shape[1])
+                )
+                if gold_ratio >= gold_min_ratio:
+                    best_gray_score = float(max_gv)
+                    best_gray_cy_px = int(sb_y1 + gy + cur_th // 2)
+
     if best_score >= match_thresh and best_cy_px > 0:
         cy_rel = float(best_cy_px) / float(max(1, gh))
+        return max(0.05, cy_rel - 0.055), min(0.86, cy_rel + 0.055), cy_rel
+    if best_gray_score >= gray_thresh and best_gray_cy_px > 0:
+        cy_rel = float(best_gray_cy_px) / float(max(1, gh))
         return max(0.05, cy_rel - 0.055), min(0.86, cy_rel + 0.055), cy_rel
     return None
 
@@ -874,7 +934,10 @@ def _is_lien_minh_tab_active(screen_crop: np.ndarray) -> bool:
 
 def _has_purple_rally_card_above(screen_crop: np.ndarray, btn_y: int) -> bool:
     """
-    Xác nhận phía trên nút xanh có phần thẻ Rally màu tím ('Tôi đã bắt đầu Tổng Tấn Công!').
+    Xác nhận phía trên nút xanh có phần thẻ Rally:
+    - Tím ('Đơn Vị Tiêu Chuẩn'),
+    - Hồng/đỏ san hô ('Tù Và Sa Mạc'),
+    - Hoặc vàng/cam đất ('Cồn Cát' / 'Đồng Bằng' / 'Mỏ Vàng').
     Loại bỏ 100% bong bóng tin nhắn màu xanh lá do người dùng/đồng đội tự chat.
     """
     if screen_crop is None or screen_crop.size == 0:
@@ -889,8 +952,14 @@ def _has_purple_rally_card_above(screen_crop: np.ndarray, btn_y: int) -> bool:
         return False
     hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     purple_mask = cv2.inRange(hsv_roi, np.array([120, 60, 80], dtype=np.uint8), np.array([155, 255, 255], dtype=np.uint8))
-    purple_ratio = float(np.count_nonzero(purple_mask)) / float(max(1, roi.shape[0] * roi.shape[1]))
-    return purple_ratio >= float(getattr(config, "RALLY_CHAT_CARD_PURPLE_MIN_RATIO", 0.12))
+    pink_red_high = cv2.inRange(hsv_roi, np.array([162, 70, 80], dtype=np.uint8), np.array([180, 255, 255], dtype=np.uint8))
+    pink_red_low = cv2.inRange(hsv_roi, np.array([0, 70, 80], dtype=np.uint8), np.array([10, 255, 255], dtype=np.uint8))
+    lower_gold = np.array(getattr(config, "HSV_CHAT_CARD_GOLD_LOWER", [12, 80, 100]), dtype=np.uint8)
+    upper_gold = np.array(getattr(config, "HSV_CHAT_CARD_GOLD_UPPER", [34, 255, 255]), dtype=np.uint8)
+    gold_mask = cv2.inRange(hsv_roi, lower_gold, upper_gold)
+    card_mask = purple_mask | pink_red_high | pink_red_low | gold_mask
+    card_ratio = float(np.count_nonzero(card_mask)) / float(max(1, roi.shape[0] * roi.shape[1]))
+    return card_ratio >= float(getattr(config, "RALLY_CHAT_CARD_PURPLE_MIN_RATIO", 0.12))
 
 
 def _find_chat_join_buttons(screen_crop: np.ndarray) -> List[Tuple[int, int]]:
@@ -1053,11 +1122,13 @@ def _tap_chat_join_and_handle_popup(
             _chat_failed_y_cooldown[y_bucket] = time.time() + float(getattr(config, "RALLY_DUNE_TAP_COOLDOWN", 8.0))
         return "POPUP_HANDLED"
 
-    # Nếu không bật popup (rally vừa hết hạn hoặc lag) -> kiểm tra còn ở Chat hay đã nhảy ra Map
+    # Nếu không bật popup (rally vừa hết hạn hoặc lag) -> chỉ thoát popup nếu thật sự xuất hiện muộn;
+    # KHÔNG tap mù vào (0.50, 0.20) trên Map để tránh tự bấm trúng ô đất sinh ra popup Đồng Bằng!
     after_frame = safe_grab(sct, {"left": gw_l, "top": gw_t, "width": gw_w, "height": gw_h})
     if after_frame is not None and not _is_chat_open(after_frame):
-        _adb_tap(adb, vp, int(gw_l + gw_w * 0.50), int(gw_t + gw_h * 0.20), "Bỏ chọn ô đất (Tự giải thoát)", log_cb)
-        _sleep(0.30, stop_event)
+        is_pop_late, is_join_late = _handle_rally_detail_popup(sct, vp, adb, stop_event, log_cb, allow_type_d_close_x=False)
+        if is_pop_late:
+            return "JOINED" if is_join_late else "POPUP_HANDLED"
     else:
         _chat_failed_y_cooldown[y_bucket] = time.time() + float(getattr(config, "RALLY_DUNE_TAP_COOLDOWN", 8.0))
     return "NO_POPUP"

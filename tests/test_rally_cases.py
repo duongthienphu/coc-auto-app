@@ -868,6 +868,22 @@ class TestRallyCases(unittest.TestCase):
         self.assertEqual(len(btns), 1)
         self.assertAlmostEqual(btns[0][1] / self.gw_h, 0.782, delta=0.03)
 
+        # 4. Thẻ Rally màu hồng/đỏ san hô (Tù Và Sa Mạc 1/12, 1/30) -> PHẢI bắt được nút Tham gia!
+        chat_pink_card = self._create_chat_frame(include_green_btn=False, lien_minh_active=True)
+        chat_pink_card[int(self.gw_h * 0.61):int(self.gw_h * 0.68), int(self.gw_w * 0.30):int(self.gw_w * 0.52)] = (105, 80, 235)
+        chat_pink_card[int(self.gw_h * 0.69):int(self.gw_h * 0.735), int(self.gw_w * 0.34):int(self.gw_w * 0.84)] = (35, 200, 50)
+        btns_pink = rally._find_chat_join_buttons(chat_pink_card)
+        self.assertEqual(len(btns_pink), 1)
+        self.assertAlmostEqual(btns_pink[0][1] / self.gw_h, 0.712, delta=0.04)
+
+        local_97 = r"C:\Users\ADMIN\.gemini\antigravity\brain\e2ec6a35-0667-4364-bb2e-744655c2954d\.user_uploaded\media_1795738781489_97674e2b.jpg"
+        if os.path.exists(local_97):
+            raw_97 = cv2.imread(local_97)
+            img_97 = raw_97[31:, 15:raw_97.shape[1] - 36]
+            btns_97 = rally._find_chat_join_buttons(img_97)
+            self.assertEqual(len(btns_97), 1)
+            self.assertAlmostEqual(btns_97[0][1] / img_97.shape[0], 0.708, delta=0.03)
+
     def test_case_22_lien_minh_tab_below_tradecard_stranger_dm(self):
         """Khi tradecard / tin nhắn người lạ nhảy lên slot 1-2 đẩy Liên Minh xuống slot 3 -> KHÔNG bấm nhầm tradecard!"""
         shield_tpl = assets.get_lien_minh_tab_template()
@@ -924,6 +940,114 @@ class TestRallyCases(unittest.TestCase):
         self.assertEqual(len(self.mock_adb.taps), 1)
         self.assertAlmostEqual(self.mock_adb.taps[0][0] / self.gw_w, 0.50, delta=0.04)
         self.assertAlmostEqual(self.mock_adb.taps[0][1] / self.gw_h, 0.945, delta=0.03)
+
+    def test_case_24_dune_strict_territory_popup_escape_and_no_mapview_x(self):
+        """Chế độ Dune (allow_type_d_close_x=False): Tự thoát bảng Đồng Bằng/ô đất che nút Chat nhưng KHÔNG bấm nhầm Mapview."""
+        # 1. Bảng Đồng Bằng chuẩn (nền thẻ tím trắng S<45,V>180 >= 0.35 + thanh tiêu đề tối Y=0.64..0.72 + nút [X] đậm)
+        terr_frame = self._create_blank_frame()
+        terr_frame[int(self.gw_h * 0.64):int(self.gw_h * 0.72), :] = (40, 35, 50)
+        terr_frame[int(self.gw_h * 0.72):int(self.gw_h * 0.91), :] = (242, 232, 236)
+        terr_frame[int(self.gw_h * 0.91):self.gw_h, :] = (35, 25, 30)
+        terr_frame[int(self.gw_h * 0.935):int(self.gw_h * 0.97), int(self.gw_w * 0.46):int(self.gw_w * 0.54)] = (250, 250, 250)
+
+        with patch("modules.rally.safe_grab", side_effect=make_mock_grab(terr_frame)):
+            is_pop, is_join = rally._handle_rally_detail_popup(
+                None, self.vp, self.mock_adb, self.stop_event, allow_type_d_close_x=False
+            )
+        self.assertTrue(is_pop, "Bảng Đồng Bằng che nút Chat phải được tự thoát về Mapview")
+        self.assertFalse(is_join)
+        self.assertEqual(len(self.mock_adb.taps), 1)
+        self.assertAlmostEqual(self.mock_adb.taps[0][0] / self.gw_w, 0.50, delta=0.04)
+        self.assertAlmostEqual(self.mock_adb.taps[0][1] / self.gw_h, 0.955, delta=0.03)
+
+        # 2. Kiểm tra trực tiếp ảnh thật 6dce13a3 (bảng Đồng Bằng bị kẹt) -> phải thoát được
+        local_6d = r"C:\Users\ADMIN\.gemini\antigravity\brain\e2ec6a35-0667-4364-bb2e-744655c2954d\.user_uploaded\media_1795690499801_6dce13a3.jpg"
+        if os.path.exists(local_6d):
+            raw_6d = cv2.imread(local_6d)
+            img_6d = raw_6d[31:, 15:raw_6d.shape[1] - 36]
+            h6, w6 = img_6d.shape[:2]
+            self.mock_adb.clear()
+            self.mock_adb.screen_size = (w6, h6)
+            with patch("modules.rally.safe_grab", side_effect=make_mock_grab(img_6d)):
+                is_p6, is_j6 = rally._handle_rally_detail_popup(
+                    None, (0, 0, w6, h6), self.mock_adb, self.stop_event, allow_type_d_close_x=False
+                )
+            self.assertTrue(is_p6)
+            self.assertFalse(is_j6)
+            self.assertEqual(len(self.mock_adb.taps), 1)
+            self.assertAlmostEqual(self.mock_adb.taps[0][1] / h6, 0.955, delta=0.03)
+
+    def test_case_25_low_multi_rally_sheet_with_18_plus_badge(self):
+        """Bảng 2+ Rally bản thấp (Y=0.15..0.22) bị nhãn '18+' chữ trắng đè phần trái header -> Vẫn phải nhận diện Type A, bấm nút xanh & đóng [X]."""
+        frame = self._create_blank_frame(bg_bgr=(140, 75, 95))
+        # Vùng mờ phía trên Y: 0.00..0.14 và header tối Y: 0.14..0.22
+        frame[0:int(self.gw_h * 0.145), :] = (38, 30, 35)
+        frame[int(self.gw_h * 0.145):int(self.gw_h * 0.215), :] = (48, 38, 44)
+        # Dán nhãn trắng giả lập '18+ Chơi quá 180 phút' đè góc trái tab_low (X: 0.04..0.24) làm np.mean(tab_low) > 75
+        frame[int(self.gw_h * 0.155):int(self.gw_h * 0.205), int(self.gw_w * 0.04):int(self.gw_w * 0.24)] = (240, 240, 240)
+        # Thẻ 1 xám, Thẻ 2 xanh lá 'Tham gia'
+        frame[int(self.gw_h * 0.30):int(self.gw_h * 0.35), int(self.gw_w * 0.60):int(self.gw_w * 0.88)] = (150, 150, 150)
+        frame[int(self.gw_h * 0.50):int(self.gw_h * 0.55), int(self.gw_w * 0.60):int(self.gw_w * 0.88)] = (35, 200, 50)
+        # Nút [X] trắng ở đáy
+        frame[int(self.gw_h * 0.91):self.gw_h, :] = (30, 22, 26)
+        frame[int(self.gw_h * 0.935):int(self.gw_h * 0.97), int(self.gw_w * 0.47):int(self.gw_w * 0.53)] = (250, 250, 250)
+
+        frame_after = frame.copy()
+        frame_after[int(self.gw_h * 0.50):int(self.gw_h * 0.55), int(self.gw_w * 0.60):int(self.gw_w * 0.88)] = (150, 150, 150)
+
+        def mock_grab(sct, mon):
+            cur = frame if len(self.mock_adb.swipes) == 0 else frame_after
+            return make_mock_grab(cur)(sct, mon)
+
+        with patch("modules.rally.safe_grab", side_effect=mock_grab):
+            is_pop, is_join = rally._handle_rally_detail_popup(
+                None, self.vp, self.mock_adb, self.stop_event, allow_type_d_close_x=False
+            )
+        self.assertTrue(is_pop)
+        self.assertTrue(is_join)
+        self.assertGreaterEqual(len(self.mock_adb.taps), 2)
+        self.assertAlmostEqual(self.mock_adb.taps[0][1] / self.gw_h, 0.525, delta=0.04)
+        self.assertAlmostEqual(self.mock_adb.taps[-1][1] / self.gw_h, 0.952, delta=0.03)
+
+        # Kiểm tra trực tiếp trên ảnh thật cb273570 (4 thẻ + nhãn 18+ + nút X đáy)
+        local_cb = r"C:\Users\ADMIN\.gemini\antigravity\brain\e2ec6a35-0667-4364-bb2e-744655c2954d\.user_uploaded\media_1795738195039_cb273570.jpg"
+        if os.path.exists(local_cb):
+            raw_cb = cv2.imread(local_cb)
+            img_cb = raw_cb[31:, 15:raw_cb.shape[1] - 36]
+            h_c, w_c = img_cb.shape[:2]
+            self.mock_adb.clear()
+            self.mock_adb.screen_size = (w_c, h_c)
+            with patch("modules.rally.safe_grab", side_effect=make_mock_grab(img_cb)):
+                is_pc, is_jc = rally._handle_rally_detail_popup(
+                    None, (0, 0, w_c, h_c), self.mock_adb, self.stop_event, allow_type_d_close_x=False
+                )
+            self.assertTrue(is_pc)
+            self.assertFalse(is_jc)
+            self.assertEqual(len(self.mock_adb.taps), 1)
+            self.assertAlmostEqual(self.mock_adb.taps[0][1] / h_c, 0.950, delta=0.04)
+
+    def test_case_26_dune_chat_gold_tile_rally_and_purple_shield_tab(self):
+        """Thẻ Rally ô đất màu vàng (Cồn Cát / Đồng Bằng) + tab Liên Minh khiên viền vàng nền tím vẫn phải bắt chuẩn."""
+        chat_gold_card = self._create_chat_frame(include_green_btn=False, lien_minh_active=True)
+        # Ô biểu tượng Cồn Cát màu vàng/cam đất (BGR: ~50, 190, 235) phía trên nút Tham gia
+        chat_gold_card[int(self.gw_h * 0.61):int(self.gw_h * 0.68), int(self.gw_w * 0.30):int(self.gw_w * 0.48)] = (50, 190, 235)
+        chat_gold_card[int(self.gw_h * 0.69):int(self.gw_h * 0.735), int(self.gw_w * 0.34):int(self.gw_w * 0.84)] = (35, 200, 50)
+        btns_gold = rally._find_chat_join_buttons(chat_gold_card)
+        self.assertEqual(len(btns_gold), 1, "Thẻ Rally màu vàng (Cồn Cát) phải bắt được nút Tham gia")
+        self.assertAlmostEqual(btns_gold[0][1] / self.gw_h, 0.712, delta=0.04)
+
+        # Kiểm tra trực tiếp trên ảnh thật ee51bb08 (Cồn Cát(28, 14) 1/8 + tab Liên Minh Zaplet)
+        local_ee = r"C:\Users\ADMIN\.gemini\antigravity\brain\f7ca2c33-7382-4daa-a7f1-a9f1c3d16480\.user_uploaded\media_1795745417461_ee51bb08.jpg"
+        if os.path.exists(local_ee):
+            raw_ee = cv2.imread(local_ee)
+            h_e, w_e = raw_ee.shape[:2]
+            scale_e = max(w_e / 443.0, h_e / 761.0)
+            img_ee = raw_ee[int(32 * scale_e):h_e, 0:w_e - int(50 * scale_e)]
+            self.assertTrue(rally._is_chat_open(img_ee))
+            self.assertTrue(rally._is_lien_minh_tab_active(img_ee), "Tab Liên Minh Zaplet phải được nhận diện đúng")
+            btns_ee = rally._find_chat_join_buttons(img_ee)
+            self.assertEqual(len(btns_ee), 1, "Ảnh thật Cồn Cát(28, 14) phải bắt được đúng 1 nút Tham gia")
+            self.assertAlmostEqual(btns_ee[0][1] / img_ee.shape[0], 0.731, delta=0.04)
 
 
 if __name__ == "__main__":
